@@ -1,0 +1,26 @@
+order_id,email,order_date,total,subtotal,discount_amount,channel,status,country,city,product_title,quantity,unit_price
+ORD-001,alice@example.com,2025-01-05,89.99,99.99,10.00,organic,completed,US,New York,Running Shoes,1,89.99
+ORD-002,bob@example.com,2025-01-08,45.00,45.00,0.00,paid,completed,US,Los Angeles,Yoga Mat,1,45.00
+ORD-003,carol@example.com,2025-01-10,120.00,130.00,10.00,email,completed,US,Chicago,Gym Bag,1,120.00
+ORD-004,alice@example.com,2025-01-20,55.00,55.00,0.00,direct,completed,US,New York,Water Bottle,2,27.50
+ORD-005,dave@example.com,2025-01-22,200.00,220.00,20.00,paid,completed,CA,Toronto,Resistance Bands Set,2,100.00
+ORD-006,eve@example.com,2025-02-01,35.00,35.00,0.00,organic,completed,US,Houston,Jump Rope,1,35.00
+ORD-007,bob@example.com,2025-02-03,90.00,90.00,0.00,email,completed,US,Los Angeles,Running Shoes,1,90.00
+ORD-008,frank@example.com,2025-02-10,75.00,80.00,5.00,paid,completed,GB,London,Foam Roller,1,75.00
+ORD-009,carol@example.com,2025-02-14,60.00,60.00,0.00,organic,completed,US,Chicago,Protein Shaker,3,20.00
+ORD-010,grace@example.com,2025-02-18,150.00,150.00,0.00,direct,completed,US,Phoenix,Dumbbell Set,1,150.00
+ORD-011,alice@example.com,2025-02-25,110.00,120.00,10.00,email,completed,US,New York,Gym Bag,1,110.00
+ORD-012,henry@example.com,2025-03-01,40.00,40.00,0.00,organic,completed,AU,Sydney,Yoga Mat,1,40.00
+ORD-013,dave@example.com,2025-03-05,85.00,85.00,0.00,paid,completed,CA,Toronto,Running Shoes,1,85.00
+ORD-014,eve@example.com,2025-03-10,95.00,100.00,5.00,direct,completed,US,Houston,Resistance Bands Set,1,95.00
+ORD-015,irene@example.com,2025-03-12,25.00,25.00,0.00,organic,completed,US,San Diego,Jump Rope,1,25.00
+ORD-016,frank@example.com,2025-03-20,130.00,130.00,0.00,email,completed,GB,London,Dumbbell Set,1,130.00
+ORD-017,grace@example.com,2025-04-01,45.00,45.00,0.00,paid,completed,US,Phoenix,Foam Roller,1,45.00
+ORD-018,jack@example.com,2025-04-05,180.00,200.00,20.00,organic,completed,US,Seattle,Gym Bag,1,180.00
+ORD-019,irene@example.com,2025-04-08,70.00,70.00,0.00,direct,completed,US,San Diego,Water Bottle,4,17.50
+ORD-020,bob@example.com,2025-04-12,55.00,55.00,0.00,paid,completed,US,Los Angeles,Protein Shaker,2,27.50
+ORD-021,kate@example.com,2025-04-15,99.00,99.00,0.00,email,completed,US,Miami,Running Shoes,1,99.00
+ORD-022,henry@example.com,2025-04-18,160.00,180.00,20.00,paid,completed,AU,Sydney,Dumbbell Set,1,160.00
+ORD-023,jack@example.com,2025-04-22,60.00,60.00,0.00,organic,completed,US,Seattle,Yoga Mat,1,60.00
+ORD-024,liam@example.com,2025-11-01,50.00,50.00,0.00,direct,completed,US,Boston,Jump Rope,2,25.00
+ORD-025,mia@example.com,2025-10-15,300.00,320.00,20.00,paid,completed,US,Denver,Dumbbell Set,2,150.00
