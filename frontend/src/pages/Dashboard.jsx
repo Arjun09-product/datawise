@@ -1,28 +1,13 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import MetricCard from '../components/MetricCard'
+import Logo from '../components/Logo'
 import { askAI } from '../lib/api'
 
 const SEGMENT_COLORS = { repeat: '#00d97e', one_time: '#a78bfa', at_risk: '#fbbf24', churned: '#f87171' }
 const CHANNEL_COLORS = { organic: '#00d97e', paid: '#a78bfa', email: '#fbbf24', direct: '#6b7280' }
 const SEGMENT_LABELS  = { repeat: 'Repeat buyers', one_time: 'One-time', at_risk: 'At-risk 30d+', churned: 'Churned 90d+' }
 const GOAL_LABELS     = { grow_repeat_rate: 'Grow repeat rate', increase_aov: 'Increase AOV', reduce_churn: 'Reduce churn', grow_revenue: 'Grow revenue' }
-
-function DatawiseLogo() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: 9, background: '#00d97e',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
-      }}>
-        <span style={{ fontSize: 8, fontWeight: 900, color: '#0e0f11', lineHeight: 1.1, letterSpacing: '0.04em', fontFamily: 'Arial Black, Arial, sans-serif' }}>DATA</span>
-        <span style={{ fontSize: 8, fontWeight: 900, color: '#0e0f11', lineHeight: 1.1, letterSpacing: '0.04em', fontFamily: 'Arial Black, Arial, sans-serif' }}>WISE</span>
-      </div>
-      <span style={{ fontSize: 22, fontWeight: 700, color: '#00d97e', letterSpacing: '-0.5px' }}>Datawise</span>
-    </div>
-  )
-}
 
 export default function Dashboard() {
   const storeName = localStorage.getItem('store_name') || 'My Store'
@@ -101,7 +86,7 @@ export default function Dashboard() {
         {/* Logo + store info */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
           <div>
-            <DatawiseLogo />
+            <Logo />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, paddingLeft: 2 }}>
               <span style={{ fontSize: 13, color: '#9ca3af' }}>{storeName}</span>
               {goal && <>

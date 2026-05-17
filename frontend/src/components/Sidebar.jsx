@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import Logo from './Logo'
 
 const links = [
   { to: '/dashboard',   label: 'Dashboard',   icon: '▦' },
@@ -11,8 +12,8 @@ const links = [
 export default function Sidebar() {
   return (
     <aside style={{ background: '#161719', width: 220, minHeight: '100vh', padding: '24px 0', flexShrink: 0, borderRight: '1px solid #1e2023' }}>
-      <div style={{ padding: '0 20px 28px', borderBottom: '1px solid #1e2023' }}>
-        <span style={{ fontSize: 18, fontWeight: 700, color: '#00d97e', letterSpacing: '-0.5px' }}>Datawise</span>
+      <div style={{ padding: '0 20px 24px', borderBottom: '1px solid #1e2023' }}>
+        <Logo size="sm" />
       </div>
       <nav style={{ marginTop: 12 }}>
         {links.map(({ to, label, icon }) => (
