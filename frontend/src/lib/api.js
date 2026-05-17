@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE = import.meta.env.VITE_API_URL || ''
 
 async function request(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, opts)
@@ -9,14 +9,41 @@ async function request(path, opts = {}) {
   return res.json()
 }
 
-export function getStore(storeId) {
-  return request(`/store/${storeId}`)
+function post(path, body) {
+  return request(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
-export function getAnalysis(storeId) {
-  return request(`/analysis/${storeId}`)
+export async function uploadCSV(file, storeName, goal, category, customGoal) {
+  const csv_content = await file.text()
+  return post('/api/ingest', { csv_content, store_name: storeName, goal, category, custom_goal: customGoal })
 }
 
-export function uploadCSV(formData) {
-  return request('/ingest/csv', { method: 'POST', body: formData })
+export function loadDemo() {
+  return request('/api/demo')
+}
+
+export function getAnalysis(storeData, userContext = '') {
+  return post('/api/analysis', { ...storeData, user_context: userContext })
+}
+
+export function validateGoal(customGoal, category) {
+  return post('/api/validate-goal', { custom_goal: customGoal, category })
+}
+
+export function askAI(question, storeData) {
+  const { store, customers, metrics } = storeData || {}
+  return post('/api/ask', { store, customers, metrics, question })
+}
+
+export function getExperimentPlan(insight, storeData) {
+  const { store, metrics } = storeData || {}
+  return post('/api/experiment-plan', { insight, store, metrics })
+}
+
+export function checkExperiment(experiment, progressNote) {
+  return post('/api/experiment-check', { experiment, progress_note: progressNote })
 }

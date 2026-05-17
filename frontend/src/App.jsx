@@ -4,9 +4,10 @@ import Upload from './pages/Upload'
 import Dashboard from './pages/Dashboard'
 import NextSteps from './pages/NextSteps'
 import Segments from './pages/Segments'
+import Experiments from './pages/Experiments'
 import Settings from './pages/Settings'
 
-const SIDEBAR_ROUTES = ['/dashboard', '/next-steps', '/segments', '/settings']
+const SIDEBAR_ROUTES = ['/dashboard', '/next-steps', '/segments', '/experiments', '/settings']
 
 function Layout() {
   const location = useLocation()
@@ -22,6 +23,7 @@ function Layout() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/next-steps" element={<NextSteps />} />
           <Route path="/segments" element={<Segments />} />
+          <Route path="/experiments" element={<Experiments />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>

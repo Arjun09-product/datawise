@@ -20,6 +20,9 @@ app.include_router(ingest.router)
 app.include_router(analysis.router)
 app.include_router(store.router)
 
+from routers import api_shim
+app.include_router(api_shim.router)
+
 
 @app.get("/health")
 def health():

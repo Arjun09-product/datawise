@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { track } from '../lib/posthog'
 
 const SEGMENT_COLORS = {
@@ -16,25 +16,17 @@ const SEGMENT_LABELS = {
 }
 
 export default function Segments() {
-  const storeId = localStorage.getItem('store_id')
-  const [customers, setCustomers] = useState([])
   const [filter, setFilter] = useState('all')
   const [sortBy, setSortBy] = useState('lifetime_value')
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!storeId) { setLoading(false); return }
-    const base = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-    fetch(`${base}/store/${storeId}`)
-      .then(r => r.json())
-      .then(d => {
-        // Store endpoint doesn't return customers list directly;
-        // in a real app we'd add a /customers endpoint. Use empty for now.
-        setCustomers(d.customers || [])
-      })
-      .catch(() => setCustomers([]))
-      .finally(() => setLoading(false))
-  }, [storeId])
+  const customers = useMemo(() => {
+    try {
+      const d = JSON.parse(localStorage.getItem('store_data') || 'null')
+      return d?.customers || []
+    } catch {
+      return []
+    }
+  }, [])
 
   function handleFilter(seg) {
     setFilter(seg)
@@ -62,13 +54,14 @@ export default function Segments() {
             key={seg}
             onClick={() => handleFilter(seg)}
             style={{
-              padding: '7px 14px', borderRadius: 8, border: `1px solid ${filter === seg ? SEGMENT_COLORS[seg] || '#00d97e' : '#2e2f33'}`,
+              padding: '7px 14px', borderRadius: 8,
+              border: `1px solid ${filter === seg ? SEGMENT_COLORS[seg] || '#00d97e' : '#2e2f33'}`,
               background: filter === seg ? `${SEGMENT_COLORS[seg] || '#00d97e'}18` : '#161719',
               color: filter === seg ? SEGMENT_COLORS[seg] || '#00d97e' : '#9ca3af',
               fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
             }}
           >
-            {seg === 'all' ? 'All' : SEGMENT_LABELS[seg]}
+            {seg === 'all' ? `All (${customers.length})` : `${SEGMENT_LABELS[seg]} (${customers.filter(c => c.segment === seg).length})`}
           </button>
         ))}
         <select
@@ -84,15 +77,15 @@ export default function Segments() {
         </select>
       </div>
 
-      {loading ? (
-        <p style={{ color: '#6b7280' }}>Loading…</p>
-      ) : sorted.length === 0 ? (
+      {customers.length === 0 ? (
         <div style={{ background: '#161719', borderRadius: 12, padding: '48px 24px', textAlign: 'center' }}>
           <p style={{ color: '#6b7280', fontSize: 14 }}>
-            {customers.length === 0
-              ? 'Customer data will appear here after you upload your CSV.'
-              : 'No customers in this segment.'}
+            Customer data will appear here after you <a href="/upload" style={{ color: '#00d97e' }}>upload your CSV</a>.
           </p>
+        </div>
+      ) : sorted.length === 0 ? (
+        <div style={{ background: '#161719', borderRadius: 12, padding: '48px 24px', textAlign: 'center' }}>
+          <p style={{ color: '#6b7280', fontSize: 14 }}>No customers in this segment.</p>
         </div>
       ) : (
         <div style={{ background: '#161719', borderRadius: 12, overflow: 'hidden' }}>
@@ -108,7 +101,7 @@ export default function Segments() {
             </thead>
             <tbody>
               {sorted.map((c, i) => {
-                const days = c.last_order_date ? Math.floor((Date.now() - new Date(c.last_order_date)) / 86400000) : '—'
+                const days = c.last_order_date ? Math.floor((Date.now() - new Date(c.last_order_date)) / 86400000) : null
                 return (
                   <tr key={i} style={{ borderBottom: '1px solid #1e2023' }}>
                     <td style={tdStyle}>{c.email || '—'}</td>
@@ -121,11 +114,11 @@ export default function Segments() {
                         {SEGMENT_LABELS[c.segment] || c.segment}
                       </span>
                     </td>
-                    <td style={{ ...tdStyle, fontFamily: 'DM Mono, monospace' }}>${(c.lifetime_value || 0).toFixed(2)}</td>
-                    <td style={{ ...tdStyle, fontFamily: 'DM Mono, monospace' }}>{c.total_orders || 0}</td>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace' }}>${(c.lifetime_value || 0).toFixed(2)}</td>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace' }}>{c.total_orders || 0}</td>
                     <td style={tdStyle}>{c.last_order_date ? new Date(c.last_order_date).toLocaleDateString() : '—'}</td>
-                    <td style={{ ...tdStyle, fontFamily: 'DM Mono, monospace', color: typeof days === 'number' && days > 60 ? '#fbbf24' : '#9ca3af' }}>
-                      {typeof days === 'number' ? `${days}d` : days}
+                    <td style={{ ...tdStyle, fontFamily: 'monospace', color: days !== null && days > 60 ? '#fbbf24' : '#9ca3af' }}>
+                      {days !== null ? `${days}d` : '—'}
                     </td>
                   </tr>
                 )
