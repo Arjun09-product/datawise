@@ -86,12 +86,15 @@ def _ai(system: str, user: str, max_tokens: int = 300) -> str:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return None
-    from anthropic import Anthropic
-    msg = Anthropic(api_key=api_key).messages.create(
-        model=HAIKU, max_tokens=max_tokens,
-        system=system, messages=[{"role": "user", "content": user}],
-    )
-    return msg.content[0].text.strip()
+    try:
+        from anthropic import Anthropic
+        msg = Anthropic(api_key=api_key).messages.create(
+            model=HAIKU, max_tokens=max_tokens,
+            system=system, messages=[{"role": "user", "content": user}],
+        )
+        return msg.content[0].text.strip()
+    except Exception:
+        return None
 
 def _parse_json(raw: str) -> dict | list | None:
     if not raw:
@@ -336,10 +339,43 @@ def validate_goal(body: ValidateGoalRequest):
     return result
 
 
+def _rule_based_answer(question: str, metrics: dict, customers: list) -> str:
+    q = question.lower()
+    repeat_rate = metrics.get("repeat_rate", 0)
+    aov = metrics.get("aov", 0)
+    total_revenue = metrics.get("total_revenue", 0)
+    total_orders = metrics.get("total_orders", 0)
+    churned = sum(1 for c in customers if c.get("segment") == "churned")
+    at_risk = sum(1 for c in customers if c.get("segment") == "at_risk")
+    channel_rev = metrics.get("channel_revenue", {})
+    top_channel = max(channel_rev, key=channel_rev.get) if channel_rev else "organic"
+    if any(w in q for w in ["repeat", "retention", "return"]):
+        return (f"Your repeat rate is {repeat_rate}%. "
+                f"{'This is below average — ' if repeat_rate < 20 else 'To improve further, '}"
+                f"focus on post-purchase email flows and a loyalty programme to bring customers back.")
+    if any(w in q for w in ["aov", "average order", "order value", "spend"]):
+        return (f"Your average order value is ${aov:.2f}. "
+                f"Adding product bundles and a free-shipping threshold at ${aov * 1.25:.2f} "
+                f"are the quickest ways to push this higher.")
+    if any(w in q for w in ["churn", "lost", "inactive"]):
+        return (f"You have {churned} churned customers and {at_risk} at-risk. "
+                f"A win-back email with 15% off typically reactivates ~8% of churned customers, "
+                f"worth targeting first.")
+    if any(w in q for w in ["channel", "traffic", "source", "paid", "organic", "email"]):
+        return (f"Your top revenue channel is {top_channel} "
+                f"(${channel_rev.get(top_channel, 0):.0f}). "
+                f"Doubling down here is more efficient than opening new channels at this stage.")
+    if any(w in q for w in ["revenue", "sales", "money", "growth"]):
+        return (f"Total revenue is ${total_revenue:,.2f} across {total_orders} orders. "
+                f"With {repeat_rate}% repeat rate and ${aov:.2f} AOV, the biggest lever is "
+                f"improving repeat purchases through email retention flows.")
+    return (f"Based on your data — ${total_revenue:,.2f} revenue, {repeat_rate}% repeat rate, "
+            f"${aov:.2f} AOV — the highest-impact action is usually improving retention. "
+            f"A post-purchase email sequence and loyalty scheme are good starting points.")
+
+
 @app.post("/api/ask")
 def ask(body: AskRequest):
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        return {"answer": "Add an ANTHROPIC_API_KEY in Vercel environment variables to enable AI answers."}
     segments: dict = {}
     for c in body.customers:
         seg = c.get("segment", "unknown")
@@ -350,7 +386,9 @@ def ask(body: AskRequest):
                f"Segments: {json.dumps(segments)}")
     system = "Concise ecommerce analyst. Answer in 2-3 sentences using the store data. Be specific."
     answer = _ai(system, f"{context}\n\nQuestion: {body.question}", 200)
-    return {"answer": answer or "Unable to generate an answer right now."}
+    if not answer:
+        answer = _rule_based_answer(body.question, body.metrics, body.customers)
+    return {"answer": answer}
 
 
 @app.post("/api/experiment-plan")
