@@ -99,14 +99,33 @@ def _ai(system: str, user: str, max_tokens: int = 300) -> str:
 def _parse_json(raw: str) -> dict | list | None:
     if not raw:
         return None
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    # strip markdown fences
+    if "```" in raw:
+        parts = raw.split("```")
+        for part in parts:
+            if part.startswith("json"):
+                part = part[4:]
+            part = part.strip()
+            if part.startswith(("[", "{")):
+                try:
+                    return json.loads(part)
+                except Exception:
+                    pass
+    # try the whole thing
     try:
         return json.loads(raw.strip())
     except Exception:
-        return None
+        pass
+    # try to extract the first [...] or {...} block
+    import re
+    for pat in (r'\[.*\]', r'\{.*\}'):
+        m = re.search(pat, raw, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group())
+            except Exception:
+                pass
+    return None
 
 def _process_csv(csv_text: str, store_name: str, goal: str,
                  category: str = "other", custom_goal: str = None) -> dict:
@@ -318,7 +337,7 @@ Generate 3 specific next steps."""
         raw = _ai(ANALYSIS_SYSTEM, prompt, 1024)
         steps = _parse_json(raw)
         if not steps:
-            raise HTTPException(status_code=500, detail="AI returned invalid JSON")
+            steps = _rule_based_steps(goal, body.metrics, body.customers, body.orders, user_context)
     else:
         steps = _rule_based_steps(goal, body.metrics, body.customers, body.orders, user_context)
 
