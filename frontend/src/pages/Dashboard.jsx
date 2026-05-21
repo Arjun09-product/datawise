@@ -1,7 +1,6 @@
-import { useMemo, useState, useRef, useEffect } from 'react'
+import { useMemo, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import MetricCard from '../components/MetricCard'
-import { askAI } from '../lib/api'
 
 const SEGMENT_COLORS = { repeat: '#00d97e', one_time: '#a78bfa', at_risk: '#fbbf24', churned: '#f87171' }
 const CHANNEL_COLORS = { organic: '#00d97e', paid: '#a78bfa', email: '#fbbf24', direct: '#6b7280' }
@@ -111,96 +110,12 @@ function JourneyFunnel({ steps }) {
   )
 }
 
-// ── Floating AI overlay ───────────────────────────────────────────────────────
-function AskAIOverlay({ storeData, onClose }) {
-  const [question, setQuestion] = useState('')
-  const [history, setHistory]   = useState([])
-  const [asking, setAsking]     = useState(false)
-  const inputRef   = useRef(null)
-  const historyRef = useRef(null)
-
-  useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 80)
-  }, [])
-
-  useEffect(() => {
-    if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
-  }, [history])
-
-  async function handleAsk(e) {
-    e.preventDefault()
-    if (!question.trim() || asking) return
-    const q = question.trim()
-    setQuestion(''); setAsking(true)
-    try {
-      const { answer } = await askAI(q, storeData)
-      setHistory(prev => [...prev, { q, a: answer }])
-    } catch {
-      setHistory(prev => [...prev, { q, a: 'Could not get an answer right now.' }])
-    } finally {
-      setAsking(false)
-      setTimeout(() => inputRef.current?.focus(), 50)
-    }
-  }
-
-  return (
-    <>
-      {/* Backdrop */}
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
-      {/* Panel */}
-      <div style={{ position: 'fixed', bottom: 80, right: 24, width: 380, maxHeight: 480, background: '#161719', border: '1px solid #2e2f33', borderRadius: 16, zIndex: 201, boxShadow: '0 12px 48px rgba(0,0,0,0.7)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '14px 18px', borderBottom: '1px solid #1e2023', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <p style={{ fontSize: 14, fontWeight: 700, color: '#f1f1f1' }}>Ask AI</p>
-            <p style={{ fontSize: 11, color: '#4b5563', marginTop: 2 }}>Powered by your store data</p>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#4b5563', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
-        </div>
-        {history.length > 0 && (
-          <div ref={historyRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {history.map((item, i) => (
-              <div key={i}>
-                <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}><span style={{ color: '#4b5563' }}>You: </span>{item.q}</p>
-                <p style={{ fontSize: 13, color: '#d1d5db', lineHeight: 1.6, paddingLeft: 10, borderLeft: '2px solid #00d97e' }}>{item.a}</p>
-              </div>
-            ))}
-            {asking && <p style={{ fontSize: 12, color: '#4b5563' }}>Thinking…</p>}
-          </div>
-        )}
-        {history.length === 0 && !asking && (
-          <div style={{ padding: '16px 18px 0' }}>
-            {['What should I do next?', 'Why is my repeat rate low?', 'How can I grow AOV?'].map(s => (
-              <button key={s} onClick={() => setQuestion(s)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', marginBottom: 6, borderRadius: 8, border: '1px solid #1e2023', background: '#0e0f11', color: '#9ca3af', fontSize: 12, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-        <form onSubmit={handleAsk} style={{ padding: '12px 14px', borderTop: history.length > 0 ? '1px solid #1e2023' : 'none', display: 'flex', gap: 8 }}>
-          <input
-            ref={inputRef}
-            value={question}
-            onChange={e => setQuestion(e.target.value)}
-            placeholder="What should I do next?"
-            style={{ flex: 1, padding: '9px 12px', borderRadius: 8, border: '1px solid #2e2f33', background: '#0e0f11', color: '#f1f1f1', fontSize: 13, fontFamily: 'DM Sans, sans-serif', outline: 'none' }}
-          />
-          <button type="submit" disabled={asking || !question.trim()} style={{ padding: '9px 14px', borderRadius: 8, border: 'none', background: asking || !question.trim() ? '#1e2023' : '#00d97e', color: asking || !question.trim() ? '#4b5563' : '#0e0f11', fontSize: 13, fontWeight: 700, cursor: asking || !question.trim() ? 'not-allowed' : 'pointer', fontFamily: 'DM Sans, sans-serif' }}>
-            →
-          </button>
-        </form>
-      </div>
-    </>
-  )
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const storeName = localStorage.getItem('store_name') || 'My Store'
   const goal      = localStorage.getItem('store_goal') || ''
   const storeData = useMemo(() => { try { return JSON.parse(localStorage.getItem('store_data') || 'null') } catch { return null } }, [])
   const pmData    = useMemo(() => { try { return JSON.parse(localStorage.getItem('pm_data') || 'null') } catch { return null } }, [])
-  const [aiOpen, setAiOpen] = useState(false)
-
   if (!storeData) return (
     <div style={centerStyle}>
       <p style={{ color: '#6b7280' }}>No data found. <a href="/upload" style={{ color: '#00d97e' }}>Upload your data first.</a></p>
@@ -331,16 +246,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Floating AI button ── */}
-      <button
-        onClick={() => setAiOpen(o => !o)}
-        style={{ position: 'fixed', bottom: 24, right: 24, width: 46, height: 46, borderRadius: '50%', background: aiOpen ? '#00b86a' : '#00d97e', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 199, boxShadow: '0 4px 20px rgba(0,217,126,0.45)', fontSize: 18, transition: 'background .15s' }}
-        title="Ask AI"
-      >
-        {aiOpen ? '×' : '✦'}
-      </button>
-
-      {aiOpen && <AskAIOverlay storeData={storeData} onClose={() => setAiOpen(false)} />}
     </div>
   )
 }

@@ -45,7 +45,6 @@ export default function NextSteps() {
   const [error,          setError]          = useState(null)
   const [hasGenerated,   setHasGenerated]   = useState(false)
   const [started,        setStarted]        = useState({})
-  const [contextOpen,    setContextOpen]    = useState(false)
 
   async function generate(ctx) {
     if (!storeData) return
@@ -90,9 +89,6 @@ export default function NextSteps() {
             <span style={{ fontSize: 11, fontWeight: 600, background: 'rgba(167,139,250,0.15)', color: '#a78bfa', padding: '2px 8px', borderRadius: 20 }}>{GOAL_LABELS[goal] || goal}</span>
           </div>
         </div>
-        <button onClick={() => generate(userContext)} disabled={loading} style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #2e2f33', background: 'transparent', color: loading ? '#4b5563' : '#9ca3af', fontSize: 13, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'DM Sans, sans-serif', flexShrink: 0 }}>
-          {loading ? 'Generating…' : '↻ Regenerate'}
-        </button>
       </div>
 
       {/* North star context strip */}
@@ -120,19 +116,27 @@ export default function NextSteps() {
         </div>
       )}
 
-      {/* Context toggle */}
-      <div style={{ marginBottom: 20 }}>
-        <button onClick={() => setContextOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#4b5563', fontSize: 13, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', padding: 0 }}>
-          <span style={{ fontSize: 10 }}>{contextOpen ? '▾' : '▸'}</span> Add context to personalise
-        </button>
-        {contextOpen && (
-          <div style={{ marginTop: 10, background: '#161719', border: '1px solid #1e2023', borderRadius: 12, padding: 16 }}>
-            <textarea value={userContext} onChange={e => setUserContext(e.target.value)} placeholder="e.g. Launching a loyalty app next month, want to tie it in…" rows={2} style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #2e2f33', background: '#0e0f11', color: '#f1f1f1', fontSize: 13, fontFamily: 'DM Sans, sans-serif', outline: 'none', resize: 'none', boxSizing: 'border-box', lineHeight: 1.6 }} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-              <button onClick={() => { generate(userContext); setContextOpen(false) }} disabled={loading} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#00d97e', color: '#0e0f11', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>Apply →</button>
-            </div>
-          </div>
-        )}
+      {/* Natural language input — always visible */}
+      <div style={{ background: '#161719', border: '1px solid #1e2023', borderRadius: 14, padding: '16px 18px', marginBottom: 20 }}>
+        <p style={{ fontSize: 11, fontWeight: 600, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>What are you focused on right now?</p>
+        <textarea
+          value={userContext}
+          onChange={e => setUserContext(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); generate(userContext) } }}
+          placeholder="e.g. I want to run a loyalty campaign next month… or just describe a challenge you're facing"
+          rows={2}
+          style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #2e2f33', background: '#0e0f11', color: '#f1f1f1', fontSize: 13, fontFamily: 'DM Sans, sans-serif', outline: 'none', resize: 'none', boxSizing: 'border-box', lineHeight: 1.6 }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+          <span style={{ fontSize: 11, color: '#374151' }}>⌘↵ to generate</span>
+          <button
+            onClick={() => generate(userContext)}
+            disabled={loading}
+            style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: loading ? '#1e2023' : '#00d97e', color: loading ? '#4b5563' : '#0e0f11', fontSize: 13, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+          >
+            {loading ? 'Generating…' : hasGenerated ? '↻ Regenerate' : 'Generate steps →'}
+          </button>
+        </div>
       </div>
 
       {error && <p style={{ color: '#f87171', fontSize: 14, marginBottom: 16 }}>{error}</p>}
