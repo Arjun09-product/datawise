@@ -77,7 +77,7 @@ export default function NextSteps() {
   )
 
   return (
-    <div style={{ flex: 1, padding: '28px 32px', overflowY: 'auto', maxWidth: 780 }}>
+    <div style={{ flex: 1, padding: '28px 40px', overflowY: 'auto' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
@@ -152,13 +152,13 @@ export default function NextSteps() {
       )}
 
       {!loading && steps && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
           {steps.map((step, i) => {
             const col   = IMPACT_COLOR[i] || '#6b7280'
             const label = IMPACT_LABEL[i] || ''
             const done  = started[step.step]
             return (
-              <div key={i} style={{ background: '#161719', borderRadius: 14, border: '1px solid #1e2023', overflow: 'hidden', borderLeft: `3px solid ${col}` }}>
+              <div key={i} style={{ background: '#161719', borderRadius: 14, border: '1px solid #1e2023', overflow: 'hidden', borderLeft: `3px solid ${col}`, gridColumn: i === 0 ? '1 / -1' : undefined }}>
                 {i === 0 && (
                   <div style={{ background: `${col}08`, borderBottom: '1px solid rgba(0,217,126,0.12)', padding: '6px 22px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: col, textTransform: 'uppercase', letterSpacing: '0.1em' }}>⚡ Top priority action</span>

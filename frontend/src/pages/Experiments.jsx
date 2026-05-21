@@ -287,7 +287,7 @@ export default function Experiments() {
   const done   = experiments.filter(e => e.status === 'completed')
 
   return (
-    <div style={{ flex: 1, padding: '28px 32px', maxWidth: 800, overflowY: 'auto' }}>
+    <div style={{ flex: 1, padding: '28px 40px', overflowY: 'auto' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
