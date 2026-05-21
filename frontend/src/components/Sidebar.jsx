@@ -5,8 +5,7 @@ const links = [
   { to: '/dashboard',   label: 'Dashboard',   icon: '▦' },
   { to: '/next-steps',  label: 'Next Steps',   icon: '✦' },
   { to: '/experiments', label: 'Experiments',  icon: '⚗' },
-  { to: '/segments',    label: 'Segments',     icon: '◈' },
-  { to: '/settings',    label: 'Settings',     icon: '⚙' },
+{ to: '/settings',    label: 'Settings',     icon: '⚙' },
 ]
 
 export default function Sidebar() {

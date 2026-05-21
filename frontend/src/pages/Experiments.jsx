@@ -9,6 +9,94 @@ function getStoreData() { try { return JSON.parse(localStorage.getItem('store_da
 const STATUS_COLORS = { not_started: '#6b7280', in_progress: '#fbbf24', completed: '#00d97e', paused: '#f87171' }
 const STATUS_LABELS = { not_started: 'Not started', in_progress: 'In progress', completed: 'Completed', paused: 'Paused' }
 
+function Timeline({ startedAt, durationDays }) {
+  if (!startedAt) return null
+  const start = new Date(startedAt)
+  const end = new Date(start.getTime() + durationDays * 86400000)
+  const now = Date.now()
+  const total = end - start
+  const elapsed = Math.min(Math.max(now - start, 0), total)
+  const pct = Math.round((elapsed / total) * 100)
+  const daysLeft = Math.max(0, Math.ceil((end - now) / 86400000))
+  const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{ fontSize: 11, color: '#4b5563' }}>{fmt(start)}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: daysLeft === 0 ? 'rgba(248,113,113,0.15)' : 'rgba(251,191,36,0.12)', color: daysLeft === 0 ? '#f87171' : '#fbbf24' }}>
+          {daysLeft === 0 ? 'Due today' : `${daysLeft}d left`}
+        </span>
+        <span style={{ fontSize: 11, color: '#4b5563' }}>{fmt(end)}</span>
+      </div>
+      <div style={{ position: 'relative', height: 6, background: '#1e2023', borderRadius: 99 }}>
+        <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${pct}%`, background: pct >= 100 ? '#00d97e' : '#fbbf24', borderRadius: 99, transition: 'width 0.5s' }} />
+        <div style={{ position: 'absolute', top: '50%', left: `${pct}%`, transform: 'translate(-50%, -50%)', width: 12, height: 12, borderRadius: '50%', background: '#0e0f11', border: `2px solid ${pct >= 100 ? '#00d97e' : '#fbbf24'}`, boxShadow: `0 0 6px ${pct >= 100 ? '#00d97e' : '#fbbf24'}60` }} />
+      </div>
+    </div>
+  )
+}
+
+function DailyTracker({ exp, onLogDay }) {
+  if (!exp.started_at || !exp.plan) return null
+  const durationDays = exp.plan.duration_days || 14
+  const start = new Date(exp.started_at)
+  start.setHours(0, 0, 0, 0)
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const logs = exp.daily_logs || []
+  const logMap = {}
+  logs.forEach(l => { logMap[l.date] = l.on_track })
+
+  const days = Array.from({ length: durationDays }, (_, i) => {
+    const d = new Date(start.getTime() + i * 86400000)
+    const dateStr = d.toISOString().slice(0, 10)
+    const isPast = dateStr < todayStr
+    const isToday = dateStr === todayStr
+    const logged = logMap[dateStr]
+    return { dateStr, isPast, isToday, logged }
+  })
+
+  const totalLogged = logs.length
+  const onTrackCount = logs.filter(l => l.on_track).length
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Daily tracker</p>
+        {totalLogged > 0 && (
+          <span style={{ fontSize: 11, color: '#4b5563' }}>
+            {onTrackCount}/{totalLogged} days on track
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        {days.map(({ dateStr, isPast, isToday, logged }) => {
+          if (isToday && logged === undefined && exp.status !== 'completed') {
+            return (
+              <div key={dateStr} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(0,217,126,0.12)', border: '1px dashed #00d97e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#00d97e', fontWeight: 700 }}>?</div>
+                <div style={{ display: 'flex', gap: 3 }}>
+                  <button onClick={() => onLogDay(dateStr, true)} title="On track" style={{ width: 22, height: 16, borderRadius: 4, border: 'none', background: 'rgba(0,217,126,0.2)', color: '#00d97e', fontSize: 9, cursor: 'pointer', fontWeight: 700, padding: 0 }}>✓</button>
+                  <button onClick={() => onLogDay(dateStr, false)} title="Behind" style={{ width: 22, height: 16, borderRadius: 4, border: 'none', background: 'rgba(248,113,113,0.2)', color: '#f87171', fontSize: 9, cursor: 'pointer', fontWeight: 700, padding: 0 }}>✗</button>
+                </div>
+              </div>
+            )
+          }
+          const bg = logged === true ? 'rgba(0,217,126,0.2)' : logged === false ? 'rgba(248,113,113,0.2)' : isPast ? '#1e2023' : '#161719'
+          const border = logged === true ? '1px solid rgba(0,217,126,0.4)' : logged === false ? '1px solid rgba(248,113,113,0.4)' : '1px solid #1e2023'
+          const icon = logged === true ? '✓' : logged === false ? '✗' : isPast ? '–' : '·'
+          const color = logged === true ? '#00d97e' : logged === false ? '#f87171' : '#4b5563'
+          return (
+            <div key={dateStr} title={dateStr} style={{ width: 28, height: 28, borderRadius: 8, background: bg, border, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color, fontWeight: 700 }}>
+              {icon}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function Experiments() {
   const navigate = useNavigate()
   const storeData = useMemo(getStoreData, [])
@@ -21,6 +109,18 @@ export default function Experiments() {
   function update(id, patch) {
     setExperiments(prev => {
       const next = prev.map(e => e.id === id ? { ...e, ...patch } : e)
+      saveExps(next)
+      return next
+    })
+  }
+
+  function handleLogDay(expId, date, onTrack) {
+    setExperiments(prev => {
+      const next = prev.map(e => {
+        if (e.id !== expId) return e
+        const logs = (e.daily_logs || []).filter(l => l.date !== date)
+        return { ...e, daily_logs: [...logs, { date, on_track: onTrack }] }
+      })
       saveExps(next)
       return next
     })
@@ -68,15 +168,15 @@ export default function Experiments() {
     setExperiments(prev => { const next = prev.filter(e => e.id !== id); saveExps(next); return next })
   }
 
-  const active   = experiments.filter(e => e.status !== 'completed')
-  const done     = experiments.filter(e => e.status === 'completed')
+  const active = experiments.filter(e => e.status !== 'completed')
+  const done   = experiments.filter(e => e.status === 'completed')
 
   return (
-    <div style={{ flex: 1, padding: '28px 32px', maxWidth: 760 }}>
+    <div style={{ flex: 1, padding: '28px 32px', maxWidth: 760, overflowY: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: '#f1f1f1', marginBottom: 4 }}>⚗ Experiments</h2>
-          <p style={{ color: '#6b7280', fontSize: 14 }}>Turn insights into tracked tests. AI coaches you through each one.</p>
+          <p style={{ color: '#6b7280', fontSize: 14 }}>Turn insights into tracked tests. Log daily progress to stay on target.</p>
         </div>
         <button
           onClick={() => navigate('/next-steps')}
@@ -113,6 +213,7 @@ export default function Experiments() {
               onToggleCheckin={() => setCheckinOpen(p => ({ ...p, [exp.id]: !p[exp.id] }))}
               onRemove={() => removeExp(exp.id)}
               onStatusChange={s => update(exp.id, { status: s })}
+              onLogDay={(date, onTrack) => handleLogDay(exp.id, date, onTrack)}
             />
           ))}
         </>
@@ -127,6 +228,7 @@ export default function Experiments() {
               onStart={() => {}} onToggleStep={() => {}} onCheckinTextChange={() => {}}
               onCheckin={() => {}} onToggleCheckin={() => {}} onRemove={() => removeExp(exp.id)}
               onStatusChange={s => update(exp.id, { status: s })}
+              onLogDay={() => {}}
             />
           ))}
         </>
@@ -143,7 +245,7 @@ function SectionLabel({ children, style = {} }) {
   )
 }
 
-function ExperimentCard({ exp, loadingPlan, checkinText, checkinLoading, checkinOpen, onStart, onToggleStep, onCheckinTextChange, onCheckin, onToggleCheckin, onRemove, onStatusChange }) {
+function ExperimentCard({ exp, loadingPlan, checkinText, checkinLoading, checkinOpen, onStart, onToggleStep, onCheckinTextChange, onCheckin, onToggleCheckin, onRemove, onStatusChange, onLogDay }) {
   const plan = exp.plan
   const statusColor = STATUS_COLORS[exp.status] || '#6b7280'
   const daysSince = exp.started_at ? Math.floor((Date.now() - new Date(exp.started_at)) / 86400000) : null
@@ -172,7 +274,7 @@ function ExperimentCard({ exp, loadingPlan, checkinText, checkinLoading, checkin
         <button onClick={onRemove} style={{ background: 'none', border: 'none', color: '#4b5563', cursor: 'pointer', fontSize: 16, padding: 4, lineHeight: 1 }}>×</button>
       </div>
 
-      {/* Not started — show start button */}
+      {/* Not started */}
       {exp.status === 'not_started' && !plan && (
         <button
           onClick={onStart}
@@ -183,9 +285,14 @@ function ExperimentCard({ exp, loadingPlan, checkinText, checkinLoading, checkin
         </button>
       )}
 
-      {/* Plan loaded */}
       {plan && (
         <>
+          {/* Timeline */}
+          <Timeline startedAt={exp.started_at} durationDays={plan.duration_days || 14} />
+
+          {/* Daily tracker */}
+          <DailyTracker exp={exp} onLogDay={onLogDay} />
+
           {/* Hypothesis */}
           <div style={{ background: '#0e0f11', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
             <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Hypothesis</p>
@@ -196,12 +303,12 @@ function ExperimentCard({ exp, loadingPlan, checkinText, checkinLoading, checkin
           <p style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Steps</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
             {plan.steps.map((step, idx) => {
-              const done = (exp.steps_done || []).includes(idx)
+              const isDone = (exp.steps_done || []).includes(idx)
               return (
                 <label key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: exp.status === 'completed' ? 'default' : 'pointer' }}>
-                  <input type="checkbox" checked={done} onChange={() => exp.status !== 'completed' && onToggleStep(idx)}
+                  <input type="checkbox" checked={isDone} onChange={() => exp.status !== 'completed' && onToggleStep(idx)}
                     style={{ marginTop: 2, accentColor: '#00d97e', flexShrink: 0 }} />
-                  <span style={{ fontSize: 13, color: done ? '#4b5563' : '#d1d5db', textDecoration: done ? 'line-through' : 'none', lineHeight: 1.5 }}>
+                  <span style={{ fontSize: 13, color: isDone ? '#4b5563' : '#d1d5db', textDecoration: isDone ? 'line-through' : 'none', lineHeight: 1.5 }}>
                     {step}
                   </span>
                 </label>
@@ -226,13 +333,12 @@ function ExperimentCard({ exp, loadingPlan, checkinText, checkinLoading, checkin
             </div>
           )}
 
-          {/* Check-in section */}
+          {/* Check-in */}
           {exp.status !== 'completed' && (
             <div>
               <button onClick={onToggleCheckin} style={{ background: 'none', border: '1px solid #2e2f33', borderRadius: 8, color: '#9ca3af', fontSize: 13, padding: '7px 14px', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>
                 {checkinOpen ? 'Close check-in' : '💬 How\'s it going?'}
               </button>
-
               {checkinOpen && (
                 <div style={{ marginTop: 12 }}>
                   <textarea
