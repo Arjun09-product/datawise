@@ -449,4 +449,279 @@ def experiment_check(body: ExperimentCheckRequest):
     return result if result else fallback
 
 
+# ── PM Engine ─────────────────────────────────────────────────────────────────
+
+JOURNEY_TEMPLATES = {
+    "sports":      ["See ad or organic content", "Visit product listing", "View product detail", "Add to cart", "Complete first purchase", "Return for repeat purchase"],
+    "clothing":    ["Discover brand via social or search", "Browse collection", "View product detail", "Add to cart", "Complete checkout", "Become a loyal repeat buyer"],
+    "beauty":      ["See review or recommendation", "Browse products", "Read details / ingredients", "Add to cart", "First purchase", "Repurchase or subscribe"],
+    "food":        ["See ad or menu", "Browse options", "Add items to order", "Checkout", "Receive first order", "Reorder within 30 days"],
+    "home":        ["Research and compare online", "View product detail", "Add to cart", "Purchase", "Receive and use product", "Leave review or repurchase"],
+    "electronics": ["Research and compare specs", "View product detail", "Add to cart", "Purchase", "Setup / onboarding", "Buy accessories or upgrade"],
+    "other":       ["Discover product", "Browse and compare", "View product detail", "Add to cart", "Complete purchase", "Return to buy again"],
+}
+
+BENCHMARKS = {
+    "sports":      {"repeat_rate": {"poor": 20, "median": 28, "good": 40}, "aov": {"poor": 45, "median": 65, "good": 90},  "churn_pct": {"poor": 75, "median": 60, "good": 45}},
+    "clothing":    {"repeat_rate": {"poor": 25, "median": 32, "good": 42}, "aov": {"poor": 50, "median": 75, "good": 100}, "churn_pct": {"poor": 70, "median": 55, "good": 40}},
+    "beauty":      {"repeat_rate": {"poor": 30, "median": 38, "good": 50}, "aov": {"poor": 35, "median": 52, "good": 75},  "churn_pct": {"poor": 65, "median": 50, "good": 35}},
+    "food":        {"repeat_rate": {"poor": 35, "median": 48, "good": 60}, "aov": {"poor": 25, "median": 38, "good": 55},  "churn_pct": {"poor": 60, "median": 45, "good": 30}},
+    "home":        {"repeat_rate": {"poor": 15, "median": 22, "good": 32}, "aov": {"poor": 60, "median": 95, "good": 140}, "churn_pct": {"poor": 80, "median": 65, "good": 50}},
+    "electronics": {"repeat_rate": {"poor": 12, "median": 18, "good": 28}, "aov": {"poor": 80, "median": 130, "good": 200},"churn_pct": {"poor": 82, "median": 70, "good": 55}},
+    "other":       {"repeat_rate": {"poor": 20, "median": 25, "good": 35}, "aov": {"poor": 40, "median": 60, "good": 85},  "churn_pct": {"poor": 75, "median": 60, "good": 45}},
+}
+
+STEP_METRIC_MAP = [
+    {"keywords": ["ad", "social", "organic", "discover", "awareness", "find", "search", "see", "content", "post"],
+     "metric_key": "channel_mix", "metric_label": "Acquisition channels", "available": True},
+    {"keywords": ["list", "browse", "catalog", "scroll", "collection", "landing", "explore", "shop"],
+     "metric_key": "channel_quality", "metric_label": "Channel quality", "available": True},
+    {"keywords": ["product", "detail", "pdp", "view", "look", "read", "consider", "spec", "description"],
+     "metric_key": "aov", "metric_label": "Avg order value (intent proxy)", "available": True},
+    {"keywords": ["cart", "add", "basket", "wishlist"],
+     "metric_key": "cart", "metric_label": "Add-to-cart rate", "available": False,
+     "note": "Connect Shopify / Google Analytics to track this step"},
+    {"keywords": ["buy", "purchase", "checkout", "order", "pay", "complete", "bought", "first purchase", "first order"],
+     "metric_key": "conversion", "metric_label": "Orders & revenue", "available": True},
+    {"keywords": ["repeat", "return", "come back", "loyal", "second", "again", "retain", "repurchase", "reorder", "subscribe"],
+     "metric_key": "repeat_rate", "metric_label": "Repeat purchase rate", "available": True},
+    {"keywords": ["refer", "share", "word", "recommend", "nps", "review", "rating"],
+     "metric_key": "referral", "metric_label": "Referral / advocacy", "available": False,
+     "note": "Requires referral or review tracking"},
+]
+
+
+class PMEngineRequest(BaseModel):
+    store: dict
+    metrics: dict
+    customers: list
+    orders: list
+    journey_steps: list = []
+    demographics: dict = {}
+    long_term_goal: str = ""
+
+
+def _bench_status(value, key, category):
+    b = BENCHMARKS.get(category, BENCHMARKS["other"]).get(key)
+    if not b:
+        return "neutral"
+    if value >= b["good"]:
+        return "healthy"
+    if value >= b["median"]:
+        return "neutral"
+    if value >= b["poor"]:
+        return "warning"
+    return "critical"
+
+
+def _map_step(step_text):
+    low = step_text.lower()
+    for m in STEP_METRIC_MAP:
+        if any(kw in low for kw in m["keywords"]):
+            return m
+    return None
+
+
+def _journey_health(journey_steps, metrics, category):
+    repeat_rate = metrics.get("repeat_rate", 0)
+    aov = metrics.get("aov", 0)
+    total_orders = metrics.get("total_orders", 0)
+    total_revenue = metrics.get("total_revenue", 0)
+    channel_rev = metrics.get("channel_revenue", {})
+    segments = metrics.get("segments", {})
+    total_customers = metrics.get("total_customers", 1)
+    top_channel = max(channel_rev, key=channel_rev.get) if channel_rev else "organic"
+    top_share = round(channel_rev.get(top_channel, 0) / max(sum(channel_rev.values()), 1) * 100)
+    bench = BENCHMARKS.get(category, BENCHMARKS["other"])
+
+    result = []
+    for i, step in enumerate(journey_steps):
+        m = _map_step(step)
+        base = {"step": i + 1, "label": step}
+
+        if not m:
+            result.append({**base, "metric_key": "unknown", "metric_label": "—",
+                           "status": "neutral", "data_available": False,
+                           "insight": "No order-data metric for this step.",
+                           "note": "Add analytics tracking for full funnel visibility."})
+            continue
+
+        if not m["available"]:
+            result.append({**base, "metric_key": m["metric_key"], "metric_label": m["metric_label"],
+                           "status": "no_data", "data_available": False,
+                           "insight": "Can't measure from order data alone.",
+                           "note": m.get("note", "Requires additional tracking.")})
+            continue
+
+        mk = m["metric_key"]
+        if mk == "repeat_rate":
+            b = bench["repeat_rate"]
+            status = _bench_status(repeat_rate, "repeat_rate", category)
+            gap = repeat_rate - b["median"]
+            result.append({**base, "metric_key": mk, "metric_label": m["metric_label"],
+                           "current_value": repeat_rate, "unit": "%",
+                           "benchmark": b["median"], "benchmark_good": b["good"],
+                           "status": status, "data_available": True,
+                           "insight": f"{repeat_rate}% repeat rate — {'✓ above' if gap >= 0 else f'{abs(gap):.0f}pp below'} the {b['median']}% {category} benchmark."})
+        elif mk == "aov":
+            b = bench["aov"]
+            status = _bench_status(aov, "aov", category)
+            gap = aov - b["median"]
+            result.append({**base, "metric_key": mk, "metric_label": m["metric_label"],
+                           "current_value": round(aov, 2), "unit": "$",
+                           "benchmark": b["median"], "benchmark_good": b["good"],
+                           "status": status, "data_available": True,
+                           "insight": f"${aov:.2f} AOV — {'✓ above' if gap >= 0 else f'${abs(gap):.0f} below'} the ${b['median']} {category} benchmark."})
+        elif mk in ("channel_mix", "channel_quality"):
+            diversified = top_share <= 65
+            result.append({**base, "metric_key": mk, "metric_label": m["metric_label"],
+                           "current_value": top_share, "unit": "% top channel",
+                           "benchmark": 60, "benchmark_good": 40,
+                           "status": "healthy" if diversified else "warning", "data_available": True,
+                           "insight": f"Top channel: {top_channel} ({top_share}% of revenue). {'Well diversified.' if diversified else 'Consider diversifying acquisition.'}"})
+        elif mk == "conversion":
+            result.append({**base, "metric_key": mk, "metric_label": m["metric_label"],
+                           "current_value": total_orders, "unit": "orders",
+                           "benchmark": None, "status": "healthy" if total_orders > 20 else "warning",
+                           "data_available": True,
+                           "insight": f"{total_orders} orders, ${total_revenue:,.2f} total revenue."})
+        else:
+            result.append({**base, "metric_key": mk, "metric_label": m["metric_label"],
+                           "status": "neutral", "data_available": False,
+                           "insight": "Metric not computable from current data."})
+    return result
+
+
+def _north_star(goal, metrics, category):
+    rr = metrics.get("repeat_rate", 0)
+    aov = metrics.get("aov", 0)
+    revenue = metrics.get("total_revenue", 0)
+    orders = metrics.get("total_orders", 0)
+    segments = metrics.get("segments", {})
+    total_cust = metrics.get("total_customers", 1)
+    churn_rate = round(segments.get("churned", 0) / total_cust * 100, 1)
+    b = BENCHMARKS.get(category, BENCHMARKS["other"])
+
+    if goal == "grow_repeat_rate":
+        br = b["repeat_rate"]
+        status = _bench_status(rr, "repeat_rate", category)
+        return {"metric": "repeat_rate", "label": "Repeat Purchase Rate", "current": rr,
+                "target": br["good"], "benchmark": br["median"], "unit": "%", "status": status,
+                "gap_text": f"+{br['good'] - rr:.1f}pp to target" if rr < br["good"] else "✓ Above target"}
+    if goal == "increase_aov":
+        ba = b["aov"]
+        status = _bench_status(aov, "aov", category)
+        return {"metric": "aov", "label": "Avg Order Value", "current": round(aov, 2),
+                "target": ba["good"], "benchmark": ba["median"], "unit": "$", "status": status,
+                "gap_text": f"+${ba['good'] - aov:.0f} to target" if aov < ba["good"] else "✓ Above target"}
+    if goal == "reduce_churn":
+        bc = b["churn_pct"]
+        status = "healthy" if churn_rate <= bc["good"] else "warning" if churn_rate <= bc["median"] else "critical"
+        return {"metric": "churn_rate", "label": "Churn Rate", "current": churn_rate,
+                "target": bc["good"], "benchmark": bc["median"], "unit": "%", "status": status,
+                "gap_text": f"-{churn_rate - bc['good']:.1f}pp to target" if churn_rate > bc["good"] else "✓ Below target"}
+    return {"metric": "total_revenue", "label": "Total Revenue", "current": revenue,
+            "target": round(revenue * 1.2), "benchmark": None, "unit": "$", "status": "neutral",
+            "gap_text": f"Target: ${revenue * 1.2:,.0f} (+20%)"}
+
+
+def _focus_areas(journey_health_data, metrics, category):
+    rr = metrics.get("repeat_rate", 0)
+    aov = metrics.get("aov", 0)
+    segments = metrics.get("segments", {})
+    at_risk = segments.get("at_risk", 0)
+    churned = segments.get("churned", 0)
+    b = BENCHMARKS.get(category, BENCHMARKS["other"])
+    areas = []
+
+    if rr < b["repeat_rate"]["median"]:
+        gap = b["repeat_rate"]["good"] - rr
+        areas.append({"rank": 1, "area": "Post-purchase retention",
+                      "problem": f"{rr}% repeat rate — {b['repeat_rate']['median'] - rr:.0f}pp below the {category} median",
+                      "lever": "3-email post-purchase flow + loyalty reward on 2nd purchase",
+                      "estimated_impact": f"+{min(gap, 12):.0f}pp repeat rate in 90 days",
+                      "journey_step": next((s["step"] for s in journey_health_data if s.get("metric_key") == "repeat_rate"), None)})
+
+    if aov < b["aov"]["median"]:
+        areas.append({"rank": 2, "area": "Average order value",
+                      "problem": f"${aov:.2f} AOV — ${b['aov']['median'] - aov:.0f} below the {category} median",
+                      "lever": f"Bundle 2 items at 10% off · free shipping at ${aov * 1.25:.0f}",
+                      "estimated_impact": f"+${(b['aov']['median'] - aov) * 0.5:.0f} AOV in 60 days",
+                      "journey_step": next((s["step"] for s in journey_health_data if s.get("metric_key") == "aov"), None)})
+
+    if at_risk > 0:
+        areas.append({"rank": 3, "area": "At-risk customer recovery",
+                      "problem": f"{at_risk} customers haven't bought in 30–60 days",
+                      "lever": "Time-limited win-back email with 10–15% off",
+                      "estimated_impact": f"Recover ~{max(1, int(at_risk * 0.15))} customers",
+                      "journey_step": next((s["step"] for s in journey_health_data if s.get("metric_key") == "repeat_rate"), None)})
+
+    if not areas and churned > 0:
+        areas.append({"rank": 1, "area": "Churned customer reactivation",
+                      "problem": f"{churned} customers lost (90d+ inactive)",
+                      "lever": "'We miss you' email with 15% off",
+                      "estimated_impact": f"Recover ~{max(1, int(churned * 0.08))} customers",
+                      "journey_step": None})
+    return areas[:3]
+
+
+def _persona_insight(demographics, category):
+    age_groups = demographics.get("age_groups", [])
+    regions = demographics.get("regions", [])
+    lines = []
+    if any(a in age_groups for a in ["18-24", "25-34"]):
+        lines.append("Your core 18–34 demo engages best on Instagram and TikTok — short-form video showing results converts well.")
+    elif any(a in age_groups for a in ["35-44", "45-54"]):
+        lines.append("35–54 buyers trust social proof and clear guarantees — invest in reviews and easy returns messaging.")
+    if "UK" in regions:
+        lines.append("UK buyers expect transparent delivery times and free returns — highlighting these lifts conversion ~8%.")
+    elif "US" in regions:
+        lines.append("US market responds to urgency (limited stock, time-limited offers) and loyalty programmes.")
+    if not lines:
+        lines.append(f"Focus on the channels where your {category} audience is most active. Email + SMS give the best retention ROI.")
+    return " ".join(lines[:2])
+
+
+@app.get("/api/journey-template/{category}")
+def journey_template(category: str):
+    steps = JOURNEY_TEMPLATES.get(category.lower(), JOURNEY_TEMPLATES["other"])
+    return {"category": category, "steps": steps}
+
+
+@app.post("/api/pm-engine")
+def pm_engine(body: PMEngineRequest):
+    store = body.store
+    category = store.get("category", "other").lower()
+    goal = store.get("goal", "grow_revenue")
+    steps = body.journey_steps or JOURNEY_TEMPLATES.get(category, JOURNEY_TEMPLATES["other"])
+
+    jh = _journey_health(steps, body.metrics, category)
+    ns = _north_star(goal, body.metrics, category)
+    fa = _focus_areas(jh, body.metrics, category)
+    persona = _persona_insight(body.demographics, category)
+
+    # AI enhancement if key available
+    ai_summary = None
+    if os.getenv("ANTHROPIC_API_KEY") and body.long_term_goal:
+        system = ("You are a senior product manager for ecommerce. Given a brand's long-term goal and "
+                  "current metrics, write ONE sharp sentence (max 20 words) naming the single biggest "
+                  "lever to hit that goal. Be direct, no fluff.")
+        prompt = (f"Brand: {store.get('name')} | Category: {category} | Goal metric: {goal}\n"
+                  f"Long-term vision: {body.long_term_goal}\n"
+                  f"Current: repeat={body.metrics.get('repeat_rate')}%, AOV=${body.metrics.get('aov')}, "
+                  f"orders={body.metrics.get('total_orders')}, revenue=${body.metrics.get('total_revenue')}\n"
+                  f"Top focus: {fa[0]['area'] if fa else 'retention'}")
+        ai_summary = _ai(system, prompt, 60)
+
+    return {
+        "north_star": ns,
+        "journey_health": jh,
+        "focus_areas": fa,
+        "persona_insight": persona,
+        "ai_summary": ai_summary,
+        "category": category,
+        "goal": goal,
+    }
+
+
 handler = Mangum(app, lifespan="off")

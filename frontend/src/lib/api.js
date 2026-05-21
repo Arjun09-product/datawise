@@ -47,3 +47,8 @@ export function getExperimentPlan(insight, storeData) {
 export function checkExperiment(experiment, progressNote) {
   return post('/api/experiment-check', { experiment, progress_note: progressNote })
 }
+
+export function runPMEngine(storeData, journeySteps = [], demographics = {}, longTermGoal = '') {
+  const { store, metrics, customers, orders } = storeData || {}
+  return post('/api/pm-engine', { store, metrics, customers, orders, journey_steps: journeySteps, demographics, long_term_goal: longTermGoal })
+}
