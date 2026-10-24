@@ -34,9 +34,11 @@ export function validateGoal(customGoal, category) {
   return post('/api/validate-goal', { custom_goal: customGoal, category })
 }
 
-export function askAI(question, storeData) {
-  const { store, customers, metrics } = storeData || {}
-  return post('/api/ask', { store, customers, metrics, question })
+// history: [{ q, a }] from the chat panel, sent so the agent can handle follow-ups
+export function askAI(question, storeData, history = []) {
+  const { store, customers, metrics, orders } = storeData || {}
+  const turns = history.flatMap(({ q, a }) => [{ role: 'user', content: q }, { role: 'assistant', content: a }])
+  return post('/api/ask', { store, customers, metrics, orders: orders || [], question, history: turns })
 }
 
 export function getExperimentPlan(insight, storeData) {

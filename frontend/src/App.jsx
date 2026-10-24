@@ -36,7 +36,7 @@ function GlobalAI() {
     if (!q || asking) return
     setQuestion(''); setAsking(true)
     try {
-      const { answer } = await askAI(q, storeData)
+      const { answer } = await askAI(q, storeData, history)
       setHistory(p => [...p, { q, a: answer }])
     } catch {
       setHistory(p => [...p, { q, a: 'Could not get an answer right now. Try again.' }])
