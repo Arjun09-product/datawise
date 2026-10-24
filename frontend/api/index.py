@@ -798,4 +798,214 @@ def pm_engine(body: PMEngineRequest):
     }
 
 
+# ── RCA agent tools ───────────────────────────────────────────────────────────
+# Deterministic: all maths happens here, reusing the PM-engine helpers above.
+# Outputs are compact summaries (never raw rows) to stay inside free-tier TPM.
+
+TOOL_RESULT_MAX_CHARS = 1200
+BENCH_GOAL_FOR_METRIC = {"repeat_rate": "grow_repeat_rate", "aov": "increase_aov",
+                         "churn_rate": "reduce_churn"}
+SEGMENT_DEFS = {"repeat": "2+ orders", "one_time": "1 order, last <30d ago",
+                "at_risk": "1 order, last 30-89d ago", "churned": "1 order, last 90d+ ago"}
+
+
+def _order_day(o: dict):
+    try:
+        return datetime.strptime(str(o.get("order_date", ""))[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _mask_email(email: str) -> str:
+    name, _, domain = str(email).partition("@")
+    return f"{name[:1]}***@{domain}" if domain else "***"
+
+
+def _compact_north_star(ns: dict) -> dict:
+    return {k: ns.get(k) for k in ("label", "current", "unit", "benchmark", "target", "status", "gap_text")}
+
+
+def _tool_get_metrics(ctx: dict) -> dict:
+    m = ctx["metrics"]
+    return {"revenue": m.get("total_revenue"), "orders": m.get("total_orders"),
+            "customers": m.get("total_customers"), "aov": m.get("aov"),
+            "repeat_rate_pct": m.get("repeat_rate"), "goal": ctx["goal"],
+            "north_star": _compact_north_star(_north_star(ctx["goal"], m, ctx["category"]))}
+
+
+def _tool_check_benchmark(ctx: dict, metric: str) -> dict:
+    if metric not in BENCH_GOAL_FOR_METRIC:
+        return {"error": f"metric must be one of {sorted(BENCH_GOAL_FOR_METRIC)}"}
+    ns = _north_star(BENCH_GOAL_FOR_METRIC[metric], ctx["metrics"], ctx["category"])
+    b = BENCHMARKS.get(ctx["category"], BENCHMARKS["other"])["churn_pct" if metric == "churn_rate" else metric]
+    return {"metric": metric, "category": ctx["category"], **_compact_north_star(ns),
+            "poor": b["poor"], "median": b["median"], "good": b["good"],
+            "direction": "lower is better" if metric == "churn_rate" else "higher is better"}
+
+
+def _tool_get_segments(ctx: dict) -> dict:
+    stats: dict = {}
+    for c in ctx["customers"]:
+        s = stats.setdefault(c.get("segment", "unknown"), {"n": 0, "ltv": 0.0, "orders": 0})
+        s["n"] += 1
+        s["ltv"] += _safe_float(c.get("lifetime_value"))
+        s["orders"] += int(_safe_float(c.get("total_orders")))
+    total = sum(s["n"] for s in stats.values()) or 1
+    return {"total_customers": total, "definitions": SEGMENT_DEFS,
+            "segments": {seg: {"count": s["n"], "pct": round(s["n"] / total * 100, 1),
+                               "avg_ltv": round(s["ltv"] / s["n"], 2),
+                               "avg_orders": round(s["orders"] / s["n"], 2)}
+                         for seg, s in stats.items()}}
+
+
+def _tool_get_journey_health(ctx: dict) -> dict:
+    steps = JOURNEY_TEMPLATES.get(ctx["category"], JOURNEY_TEMPLATES["other"])
+    jh = _journey_health(steps, ctx["metrics"], ctx["category"])
+    fa = _focus_areas(jh, ctx["metrics"], ctx["category"])
+    return {"steps": [{"step": s["step"], "label": s["label"], "status": s["status"],
+                       "insight": s["insight"]} for s in jh],
+            "focus_areas": [{k: f[k] for k in ("area", "problem", "lever", "estimated_impact")} for f in fa]}
+
+
+def _tool_get_channel_breakdown(ctx: dict) -> dict:
+    channel_rev = ctx["metrics"].get("channel_revenue", {})
+    total_rev = sum(channel_rev.values()) or 1
+    out = {ch: {"revenue": rev, "revenue_share_pct": round(rev / total_rev * 100, 1)}
+           for ch, rev in sorted(channel_rev.items(), key=lambda kv: -kv[1])}
+    orders = ctx["orders"]
+    if orders:
+        # acquisition channel = channel of each customer's first order
+        by_cust = {c.get("customer_id"): c for c in ctx["customers"]}
+        first: dict = {}
+        for o in sorted(orders, key=lambda o: str(o.get("order_date", ""))):
+            ch = o.get("channel", "organic")
+            row = out.setdefault(ch, {"revenue": 0, "revenue_share_pct": 0})
+            row["orders"] = row.get("orders", 0) + 1
+            first.setdefault(o.get("customer_id"), ch)
+        for ch, row in out.items():
+            if row.get("orders"):
+                row["aov"] = round(row["revenue"] / row["orders"], 2)
+            acquired = [cid for cid, fch in first.items() if fch == ch]
+            if acquired:
+                repeaters = sum(1 for cid in acquired
+                                if _safe_float(by_cust.get(cid, {}).get("total_orders")) >= 2)
+                row["customers_acquired"] = len(acquired)
+                row["acquired_repeat_rate_pct"] = round(repeaters / len(acquired) * 100, 1)
+    return {"channels": out}
+
+
+def _tool_get_at_risk_customers(ctx: dict, limit: int = 5, include_churned: bool = False) -> dict:
+    limit = max(1, min(int(limit), 10))
+    wanted = {"at_risk", "churned"} if include_churned in (True, 1, "true", "True") else {"at_risk"}
+    pool = [c for c in ctx["customers"] if c.get("segment") in wanted]
+    pool.sort(key=lambda c: -_safe_float(c.get("lifetime_value")))
+    today = datetime.utcnow().date()
+
+    def days_since(c):
+        try:
+            return (today - datetime.strptime(c.get("last_order_date", ""), "%Y-%m-%d").date()).days
+        except ValueError:
+            return None
+
+    return {"segments_included": sorted(wanted), "total_matching": len(pool),
+            "ltv_at_stake": round(sum(_safe_float(c.get("lifetime_value")) for c in pool), 2),
+            "top": [{"customer": _mask_email(c.get("email", "")), "segment": c.get("segment"),
+                     "orders": c.get("total_orders"), "ltv": c.get("lifetime_value"),
+                     "days_since_last_order": days_since(c)} for c in pool[:limit]]}
+
+
+def _period_stats(orders: list, first_order_day: dict) -> dict:
+    rev = sum(_safe_float(o.get("total")) for o in orders)
+    custs = {o.get("customer_id") for o in orders}
+    new = {o.get("customer_id") for o in orders if first_order_day.get(o.get("customer_id")) == _order_day(o)}
+    channels: dict = {}
+    for o in orders:
+        channels[o.get("channel", "organic")] = round(channels.get(o.get("channel", "organic"), 0) + _safe_float(o.get("total")), 2)
+    return {"revenue": round(rev, 2), "orders": len(orders),
+            "aov": round(rev / len(orders), 2) if orders else 0,
+            "customers": len(custs), "new_customers": len(new),
+            "returning_customers": len(custs - new), "channel_revenue": channels}
+
+
+def _tool_compare_periods(ctx: dict, days: int = 30) -> dict:
+    days = max(7, min(int(days), 180))
+    dated = [(d, o) for o in ctx["orders"] if (d := _order_day(o))]
+    if not dated:
+        return {"error": "No order dates available, so periods can't be compared."}
+    anchor = max(d for d, _ in dated)
+    cur_start, prev_start = anchor - timedelta(days=days - 1), anchor - timedelta(days=2 * days - 1)
+    first_order_day: dict = {}
+    for d, o in dated:
+        cid = o.get("customer_id")
+        if cid not in first_order_day or d < first_order_day[cid]:
+            first_order_day[cid] = d
+    cur = _period_stats([o for d, o in dated if d >= cur_start], first_order_day)
+    prev = _period_stats([o for d, o in dated if prev_start <= d < cur_start], first_order_day)
+
+    def delta(k):
+        return round((cur[k] - prev[k]) / prev[k] * 100, 1) if prev[k] else None
+
+    return {"anchor": "latest order date in the data (not today)",
+            "current": {"from": cur_start.isoformat(), "to": anchor.isoformat(), **cur},
+            "previous": {"from": prev_start.isoformat(), "to": (cur_start - timedelta(days=1)).isoformat(), **prev},
+            "change_pct": {k: delta(k) for k in ("revenue", "orders", "aov", "customers", "new_customers")}}
+
+
+AGENT_TOOLS = {
+    "get_metrics": (_tool_get_metrics,
+                    "Headline metrics (revenue, orders, customers, AOV, repeat rate) and the north-star gap for the store's goal.",
+                    {}),
+    "check_benchmark": (_tool_check_benchmark,
+                        "Compare one metric to the category benchmark (poor/median/good thresholds and status).",
+                        {"metric": {"type": "string", "enum": list(BENCH_GOAL_FOR_METRIC)}}),
+    "get_segments": (_tool_get_segments,
+                     "Customer counts, share, avg LTV and avg orders per segment (repeat, one_time, at_risk, churned).",
+                     {}),
+    "get_journey_health": (_tool_get_journey_health,
+                           "Health of each customer-journey step vs benchmarks, plus ranked focus areas.",
+                           {}),
+    "get_channel_breakdown": (_tool_get_channel_breakdown,
+                              "Revenue, orders, AOV per channel and repeat rate of customers acquired via each channel.",
+                              {}),
+    "get_at_risk_customers": (_tool_get_at_risk_customers,
+                              "Top at-risk (optionally churned) customers by lifetime value, emails masked.",
+                              {"limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                               "include_churned": {"type": "boolean"}}),
+    "compare_periods": (_tool_compare_periods,
+                        "Compare the last N days with the N days before (revenue, orders, AOV, new vs returning, channels).",
+                        {"days": {"type": "integer", "minimum": 7, "maximum": 180}}),
+}
+
+
+def _agent_tool_specs(ctx: dict) -> list:
+    names = [n for n in AGENT_TOOLS if n != "compare_periods" or ctx["has_order_dates"]]
+    return [{"type": "function", "function": {
+                "name": n, "description": AGENT_TOOLS[n][1],
+                "parameters": {"type": "object", "properties": AGENT_TOOLS[n][2]}}}
+            for n in names]
+
+
+def _run_tool(name: str, raw_args, ctx: dict) -> dict:
+    """Execute one tool call; every failure becomes an {"error": ...} result for the model."""
+    if name not in AGENT_TOOLS or (name == "compare_periods" and not ctx["has_order_dates"]):
+        return {"error": f"Unknown tool '{name}'."}
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) and raw_args.strip() else (raw_args or {})
+        if not isinstance(args, dict):
+            raise ValueError
+    except ValueError:
+        return {"error": "Arguments were not a valid JSON object."}
+    allowed = AGENT_TOOLS[name][2]
+    args = {k: v for k, v in args.items() if k in allowed}
+    try:
+        return AGENT_TOOLS[name][0](ctx, **args)
+    except (TypeError, ValueError, KeyError, ZeroDivisionError) as e:
+        return {"error": f"{name} failed: {type(e).__name__}"}
+
+
+def _compact_json(obj) -> str:
+    s = json.dumps(obj, separators=(",", ":"), default=str)
+    return s if len(s) <= TOOL_RESULT_MAX_CHARS else s[:TOOL_RESULT_MAX_CHARS] + "…(truncated)"
+
+
 handler = Mangum(app, lifespan="off")
