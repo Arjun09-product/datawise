@@ -1,9 +1,14 @@
 import os
 import csv
 import io
+import re
+import time
 import uuid
 import json
-from datetime import datetime
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -50,6 +55,9 @@ class AskRequest(BaseModel):
     customers: list
     metrics: dict
     question: str
+    orders: list = []
+    # prior turns for follow-ups: [{"role": "user"|"assistant", "content": "..."}]
+    history: list = []
 
 class ValidateGoalRequest(BaseModel):
     custom_goal: str
@@ -95,6 +103,72 @@ def _ai(system: str, user: str, max_tokens: int = 300) -> str:
         return msg.content[0].text.strip()
     except Exception:
         return None
+
+
+# ── Agent LLM client (OpenAI-compatible, swappable via env) ──────────────────
+# LLM_BASE_URL / LLM_MODEL pick the provider; LLM_API_KEY is read from the
+# environment on every call and never logged. Stdlib only, no SDK dependency.
+
+DEFAULT_LLM_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
+LLM_MAX_RETRIES = 2        # retries on 429 / 5xx
+LLM_MAX_BACKOFF_S = 8
+
+
+class LLMError(Exception):
+    """LLM unavailable: no key, network error, or rate-limited past our budget."""
+
+
+class ToolCallError(Exception):
+    """Provider rejected the model's own malformed tool call (Groq: tool_use_failed)."""
+
+
+def _retry_after(headers, attempt: int) -> float:
+    try:
+        wait = float(headers.get("retry-after"))
+    except (TypeError, ValueError):
+        wait = 2 ** attempt
+    return min(max(wait, 0.5), LLM_MAX_BACKOFF_S)
+
+
+def _llm_chat(messages: list, tools: list = None, tool_choice: str = "auto",
+              max_tokens: int = 400, deadline: float = None) -> dict:
+    """One chat-completions call. Returns the assistant message dict."""
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        raise LLMError("LLM_API_KEY not set")
+    base = (os.getenv("LLM_BASE_URL") or DEFAULT_LLM_BASE_URL).rstrip("/")
+    payload = {"model": os.getenv("LLM_MODEL") or DEFAULT_LLM_MODEL,
+               "messages": messages, "max_tokens": max_tokens, "temperature": 0.2}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = tool_choice
+    data = json.dumps(payload).encode()
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
+               "User-Agent": "datawise-agent/1.0"}
+
+    for attempt in range(LLM_MAX_RETRIES + 1):
+        remaining = deadline - time.monotonic() if deadline else 20
+        if remaining < 2:
+            raise LLMError("time budget exhausted")
+        req = urllib.request.Request(f"{base}/chat/completions", data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=min(remaining, 15)) as resp:
+                return json.loads(resp.read())["choices"][0]["message"]
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", "replace")[:1000]
+            if e.code == 429 or e.code >= 500:
+                wait = _retry_after(e.headers, attempt)
+                if attempt == LLM_MAX_RETRIES or (deadline and time.monotonic() + wait > deadline - 2):
+                    raise LLMError(f"HTTP {e.code} after {attempt + 1} attempt(s)")
+                time.sleep(wait)
+                continue
+            if e.code == 400 and "tool_use_failed" in err_body:
+                raise ToolCallError("malformed tool call")
+            raise LLMError(f"HTTP {e.code}")
+        except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError) as e:
+            raise LLMError(type(e).__name__)
+    raise LLMError("unreachable")
 
 def _parse_json(raw: str) -> dict | list | None:
     if not raw:
