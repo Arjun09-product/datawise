@@ -467,23 +467,6 @@ def _rule_based_answer(question: str, metrics: dict, customers: list) -> str:
             f"A post-purchase email sequence and loyalty scheme are good starting points.")
 
 
-@app.post("/api/ask")
-def ask(body: AskRequest):
-    segments: dict = {}
-    for c in body.customers:
-        seg = c.get("segment", "unknown")
-        segments[seg] = segments.get(seg, 0) + 1
-    context = (f"Store: {body.store.get('name')} | Category: {body.store.get('category','ecommerce')}\n"
-               f"Revenue: ${body.metrics.get('total_revenue')} | Orders: {body.metrics.get('total_orders')} "
-               f"| AOV: ${body.metrics.get('aov')} | Repeat: {body.metrics.get('repeat_rate')}%\n"
-               f"Segments: {json.dumps(segments)}")
-    system = "Concise ecommerce analyst. Answer in 2-3 sentences using the store data. Be specific."
-    answer = _ai(system, f"{context}\n\nQuestion: {body.question}", 200)
-    if not answer:
-        answer = _rule_based_answer(body.question, body.metrics, body.customers)
-    return {"answer": answer}
-
-
 @app.post("/api/experiment-plan")
 def experiment_plan(body: ExperimentPlanRequest):
     insight = body.insight
@@ -1006,6 +989,120 @@ def _run_tool(name: str, raw_args, ctx: dict) -> dict:
 def _compact_json(obj) -> str:
     s = json.dumps(obj, separators=(",", ":"), default=str)
     return s if len(s) <= TOOL_RESULT_MAX_CHARS else s[:TOOL_RESULT_MAX_CHARS] + "…(truncated)"
+
+
+# ── RCA agent loop (/api/ask) ─────────────────────────────────────────────────
+
+# Budget: vercel.json caps this function at maxDuration=30s, so the whole loop
+# (including 429 backoff) must finish well inside that. Groq free tier is
+# rate-limited per org (RPM/TPM), hence few iterations and small max_tokens.
+AGENT_MAX_ITERS = 5            # LLM calls per question; the last one is forced to answer
+AGENT_MAX_TOOLS_PER_TURN = 4
+AGENT_TIME_BUDGET_S = 24
+AGENT_MAX_TOKENS = 450
+AGENT_HISTORY_TURNS = 6
+AGENT_HISTORY_MAX_CHARS = 600
+
+_FALLBACK_RCA_PROMPT = ("You are a root-cause analyst for a small D2C Shopify store. Use the tools to "
+                        "get numbers; never invent them. Answer in under 120 words, citing the figures.")
+
+
+def _load_prompt(name: str, fallback: str) -> str:
+    """Load docs/<name>.md (HTML comments stripped) next to the frontend root."""
+    here = Path(__file__).resolve().parent
+    for path in (here.parent / "docs" / name, here.parent.parent / "docs" / name):
+        try:
+            text = re.sub(r"<!--.*?-->", "", path.read_text(encoding="utf-8"), flags=re.DOTALL).strip()
+            if text:
+                return text
+        except OSError:
+            continue
+    return fallback
+
+
+RCA_SYSTEM_PROMPT = _load_prompt("rca_agent.md", _FALLBACK_RCA_PROMPT)
+
+
+def _agent_ctx(body: AskRequest) -> dict:
+    orders = body.orders or []
+    return {"store": body.store, "metrics": body.metrics, "customers": body.customers, "orders": orders,
+            "category": str(body.store.get("category") or "other").lower(),
+            "goal": body.store.get("goal") or "grow_revenue",
+            "has_order_dates": any(_order_day(o) for o in orders)}
+
+
+def _agent_user_message(body: AskRequest, ctx: dict) -> str:
+    days = sorted(d for o in ctx["orders"] if (d := _order_day(o)))
+    data_note = (f"Order-level data: {len(days)} orders dated {days[0]} to {days[-1]}."
+                 if days else "Order-level dates: not available (no period comparisons).")
+    return (f"Store: {body.store.get('name', 'My Store')} | Category: {ctx['category']} | "
+            f"Goal: {GOAL_LABELS.get(ctx['goal'], ctx['goal'])} | Today: {datetime.utcnow().date()}\n"
+            f"{data_note} No session, funnel or product-level data.\n\nQuestion: {body.question}")
+
+
+def _history_messages(history: list) -> list:
+    out = []
+    for turn in (history or [])[-AGENT_HISTORY_TURNS:]:
+        if isinstance(turn, dict) and turn.get("role") in ("user", "assistant") and turn.get("content"):
+            out.append({"role": turn["role"], "content": str(turn["content"])[:AGENT_HISTORY_MAX_CHARS]})
+    return out
+
+
+def _run_rca_agent(body: AskRequest, trace: list) -> Optional[str]:
+    """Tool-calling loop. Returns the answer, or None if the cap is hit without one.
+    Raises LLMError when the model is unavailable. `trace` is filled in place."""
+    ctx = _agent_ctx(body)
+    tools = _agent_tool_specs(ctx)
+    deadline = time.monotonic() + AGENT_TIME_BUDGET_S
+    messages = ([{"role": "system", "content": RCA_SYSTEM_PROMPT}] + _history_messages(body.history)
+                + [{"role": "user", "content": _agent_user_message(body, ctx)}])
+
+    for i in range(AGENT_MAX_ITERS):
+        final_turn = i == AGENT_MAX_ITERS - 1
+        try:
+            msg = _llm_chat(messages, tools=tools, tool_choice="none" if final_turn else "auto",
+                            max_tokens=AGENT_MAX_TOKENS, deadline=deadline)
+        except ToolCallError:
+            trace.append({"tool": "(malformed call)", "args": {}, "short_result": "rejected by provider; retrying"})
+            messages.append({"role": "user", "content": "Your last tool call was malformed. Call a tool with "
+                             "valid JSON arguments, or answer directly from the results you have."})
+            continue
+
+        calls = msg.get("tool_calls") or []
+        if not calls or final_turn:
+            return (msg.get("content") or "").strip() or None
+
+        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        for n, call in enumerate(calls):
+            fn = call.get("function") or {}
+            name, raw_args = fn.get("name", ""), fn.get("arguments", "{}")
+            if n < AGENT_MAX_TOOLS_PER_TURN:
+                result = _run_tool(name, raw_args, ctx)
+            else:
+                result = {"error": "Skipped: too many tool calls in one turn."}
+            result_str = _compact_json(result)
+            try:
+                shown_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            except ValueError:
+                shown_args = {"_raw": str(raw_args)[:100]}
+            trace.append({"tool": name, "args": shown_args or {}, "short_result": result_str[:200]})
+            messages.append({"role": "tool", "tool_call_id": call.get("id", f"call_{i}_{n}"),
+                             "content": result_str})
+    return None
+
+
+@app.post("/api/ask")
+def ask(body: AskRequest):
+    trace: list = []
+    try:
+        answer = _run_rca_agent(body, trace)
+        if answer:
+            return {"answer": answer, "trace": trace, "source": "agent"}
+    except Exception:
+        # LLMError or anything unexpected: never 500 the chat box, fall back to rules
+        pass
+    return {"answer": _rule_based_answer(body.question, body.metrics, body.customers),
+            "trace": trace, "source": "rule_based"}
 
 
 handler = Mangum(app, lifespan="off")
